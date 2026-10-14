@@ -111,6 +111,25 @@ input:focus{border-color:var(--accent)}
 .chips button{background:var(--bg);border:1px solid var(--hair);border-radius:999px;padding:8px 16px;font-variant-numeric:tabular-nums;min-height:40px}
 .preview{margin:0;font:600 1.1rem var(--font-display);font-variant-numeric:tabular-nums}
 .note{margin:0;font-size:.88rem;color:var(--warn)}
+.histbox{display:flex;flex-direction:column;gap:12px}
+.seg{display:flex;border:1.5px solid var(--ink);border-radius:8px;overflow:hidden}
+.seg button{flex:1;background:var(--surface);border:0;padding:10px;font-weight:500;min-height:44px}
+.seg button+button{border-left:1.5px solid var(--ink)}
+.seg button[aria-pressed=true]{background:var(--ink);color:var(--bg)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:.88rem;color:var(--muted)}
+.sw{display:inline-block;width:22px;height:0;border-top:3px solid var(--accent);vertical-align:middle;margin-right:6px}
+.sw.th{border-top:3px dashed var(--warn)}
+.chartwrap{position:relative}
+.chartwrap svg{display:block;touch-action:pan-y}
+.chartwrap text{font:12px var(--font-body);fill:var(--muted)}
+.gridl{stroke:var(--hair);stroke-width:1}
+.l-act{stroke:var(--accent);fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.l-th{stroke:var(--warn);fill:none;stroke-width:2;stroke-dasharray:6 4}
+.dot{fill:var(--accent);stroke:var(--bg);stroke-width:2}
+.cross{stroke:var(--ink);stroke-width:1;opacity:.5}
+.tip{position:absolute;top:6px;pointer-events:none;background:var(--surface);border:1px solid var(--hair);border-radius:8px;padding:8px 10px;font-size:.85rem;line-height:1.35;font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+.daygrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.daygrid label{display:flex;flex-direction:column;gap:4px;font-size:.88rem;font-weight:600}
 .pform{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .pform .wide{grid-column:1/-1}
 .pform label{display:flex;flex-direction:column;gap:4px;font-size:.88rem;font-weight:600}
@@ -176,6 +195,15 @@ tr.avg td{border-top:2px solid var(--ink);font-weight:600}
 
   <section class="label" id="summary" aria-label="Totaux du jour"></section>
 
+  <section class="panel" aria-labelledby="bodyTitle">
+    <h2 id="bodyTitle">Dépense et poids</h2>
+    <div class="daygrid">
+      <label for="dBurn">Calories dépensées (kcal)<input id="dBurn" type="number" min="0" step="10" inputmode="numeric" placeholder="ex. 2800"></label>
+      <label for="dWeight">Poids du jour (kg)<input id="dWeight" type="number" min="0" step="0.1" inputmode="decimal" placeholder="ex. 78,4"></label>
+    </div>
+    <p class="hint">Dépense totale de la journée (repos + activité), telle qu’affichée par ta montre ou Garmin Connect.</p>
+  </section>
+
   <section class="panel" aria-labelledby="addTitle">
     <h2 id="addTitle">Ajouter un produit</h2>
     <button type="button" class="primary big" data-action="scan">Scanner un code-barres</button>
@@ -207,8 +235,22 @@ tr.avg td{border-top:2px solid var(--ink);font-weight:600}
   </section>
 
   <section aria-labelledby="hTitle">
-    <h2 id="hTitle">7 derniers jours</h2>
-    <div class="scroll"><table id="history"></table></div>
+    <h2 id="hTitle">Historique</h2>
+    <div class="histbox">
+      <div class="seg" role="group" aria-label="Période affichée">
+        <button type="button" data-action="range" data-r="7" aria-pressed="true">7 jours</button>
+        <button type="button" data-action="range" data-r="30" aria-pressed="false">1 mois</button>
+        <button type="button" data-action="range" data-r="365" aria-pressed="false">1 an</button>
+      </div>
+      <div id="chartBlock" class="histbox">
+        <div class="legend"><span><i class="sw"></i>Poids réel</span><span id="legendTh"><i class="sw th"></i>Poids théorique</span></div>
+        <div class="chartwrap"><div id="chart"></div><div id="tip" class="tip" hidden></div></div>
+        <p class="hint">Le poids théorique part de ton premier poids de la période, puis applique chaque jour ton bilan (7 700 kcal = 1 kg). Les jours sans bilan sont ignorés.</p>
+      </div>
+      <p id="chartEmpty" class="empty" hidden>Note ton poids du jour pour voir la courbe d’évolution.</p>
+      <div class="scroll"><table id="history"></table></div>
+      <p class="hint" id="histNote"></p>
+    </div>
   </section>
 
   <details class="settings">
@@ -315,6 +357,13 @@ function lastDays(today, n){
   for (let i = 0; i < n; i++) out.push(shiftDay(today, -i));
   return out;
 }
+// Theoretical energy content of 1 kg of body mass.
+const KCAL_PER_KG = 7700;
+// Balance of a day: eaten - burned. Positive = surplus, negative = deficit. null when burn is unknown.
+function dayBalance(eaten, burn){
+  return burn === null || burn === undefined ? null : eaten - burn;
+}
+function kgFromKcal(kcal){ return kcal / KCAL_PER_KG; }
 // </pure>
 
 /* ---------- barcode decoding with the bundled ZXing ---------- */
@@ -334,7 +383,7 @@ function zxDecode(source){
 
 /* ---------- state ---------- */
 const KEY = 'carnet-seche-v1';
-const DEFAULTS = { targets: { kcal: 2350, prot: 150, fat: 60 }, products: {}, log: {} };
+const DEFAULTS = { targets: { kcal: 2350, prot: 150, fat: 60 }, products: {}, log: {}, days: {} };
 let state = load();
 let currentDay = dayKey(new Date());
 let sel = null;       // { product, grams }
@@ -347,7 +396,8 @@ function load(){
       return {
         targets: Object.assign({}, DEFAULTS.targets, raw.targets || {}),
         products: raw.products && typeof raw.products === 'object' ? raw.products : {},
-        log: raw.log && typeof raw.log === 'object' ? raw.log : {}
+        log: raw.log && typeof raw.log === 'object' ? raw.log : {},
+        days: raw.days && typeof raw.days === 'object' ? raw.days : {}
       };
     }
   } catch (e) {}
@@ -381,6 +431,26 @@ function bar(value, target, mode){
   const cls = mode === 'max' ? (value > target ? 'over' : '') : (value >= target ? 'met' : '');
   return '<div class="bar ' + cls + '"><i style="width:' + pct.toFixed(1) + '%"></i></div>';
 }
+function dayData(key){ return Object.assign({ burn: null, weight: null }, state.days[key]); }
+function setDayField(key, field, value){
+  const d = dayData(key); d[field] = value;
+  if (d.burn === null && d.weight === null) delete state.days[key]; else state.days[key] = d;
+}
+function signed(n, d = 0){ return (n > 0 ? '+' : n < 0 ? '−' : '') + fmt(Math.abs(n), d); }
+// Balance row for the day label; eaten is null when nothing was logged.
+function balanceBlock(eaten, burn){
+  if (burn === null) return '<p class="hint">Renseigne les calories dépensées pour voir ton bilan du jour.</p>';
+  if (eaten === null) return '<p class="hint">Ajoute des aliments pour voir ton bilan du jour.</p>';
+  const bal = dayBalance(eaten, burn), kg = kgFromKcal(bal);
+  const word = bal <= 0 ? 'Déficit' : 'Surplus';
+  return '<div class="lrow"><span>Bilan (mangé − dépensé)</span><span class="num">' + signed(bal) + ' <small>kcal</small></span></div>' +
+    '<p class="hint ' + (bal <= 0 ? 'good' : 'bad') + '">' + word + ' de ' + fmt(Math.abs(bal)) + ' kcal · ≈ ' + signed(kg, 2) + ' kg théorique</p>';
+}
+function renderBody(){
+  const d = dayData(currentDay);
+  $('dBurn').value = d.burn === null ? '' : d.burn;
+  $('dWeight').value = d.weight === null ? '' : d.weight;
+}
 function renderSummary(){
   const entries = state.log[currentDay] || [];
   const t = sumEntries(entries), T = state.targets;
@@ -401,7 +471,8 @@ function renderSummary(){
     '<div class="lrow"><span>Lipides</span><span class="num">' + fmt(t.f) + ' <small>g · min ' + fmt(T.fat) + '</small></span></div>' +
     bar(t.f, T.fat, 'min') + fatHint +
     '<div class="lrow"><span>Glucides</span><span class="num">' + fmt(t.c) + ' <small>g</small></span></div>' +
-    '<div class="lrow sub"><span>dont sucres</span><span class="num">' + fmt(t.s) + ' <small>g</small></span></div>';
+    '<div class="lrow sub"><span>dont sucres</span><span class="num">' + fmt(t.s) + ' <small>g</small></span></div>' +
+    balanceBlock(entries.length ? t.kcal : null, dayData(currentDay).burn);
   $('dayLabel').textContent = dayTitle(currentDay);
   $('nextBtn').disabled = currentDay >= dayKey(new Date());
 }
@@ -459,21 +530,146 @@ function renderLibrary(){
       ).join('')
     : '<li class="empty">' + (q ? 'Aucun produit ne correspond.' : 'Les produits que tu ajoutes au journal apparaissent ici.') + '</li>';
 }
-function renderHistory(){
-  const today = dayKey(new Date());
-  const rows = lastDays(today, 7).map(k => ({ k, n: (state.log[k] || []).length, t: sumEntries(state.log[k]) }));
-  const filled = rows.filter(r => r.n > 0);
-  const avg = filled.length ? filled.reduce((a, r) => ({ kcal: a.kcal + r.t.kcal, p: a.p + r.t.p, f: a.f + r.t.f }), { kcal: 0, p: 0, f: 0 }) : null;
-  $('history').innerHTML =
-    '<thead><tr><th>Jour</th><th>kcal</th><th>Prot. g</th><th>Lip. g</th></tr></thead><tbody>' +
-    rows.map(r => r.n
-      ? '<tr><td>' + esc(dayTitle(r.k)) + '</td><td>' + fmt(r.t.kcal) + '</td><td class="' + (r.t.p >= state.targets.prot ? 'met' : '') + '">' + fmt(r.t.p) + '</td><td>' + fmt(r.t.f) + '</td></tr>'
-      : '<tr><td>' + esc(dayTitle(r.k)) + '</td><td colspan="3">–</td></tr>'
-    ).join('') +
-    (avg ? '<tr class="avg"><td>Moyenne (' + filled.length + ' j)</td><td>' + fmt(avg.kcal / filled.length) + '</td><td>' + fmt(avg.p / filled.length) + '</td><td>' + fmt(avg.f / filled.length) + '</td></tr>' : '') +
-    '</tbody>';
+/* ---------- history: table and weight chart over 7 days / 1 month / 1 year ---------- */
+let range = 7;
+function mondayOf(key){
+  const [y, m, d] = key.split('-').map(Number);
+  return shiftDay(key, -((new Date(y, m - 1, d).getDay() + 6) % 7));
 }
-function renderAll(){ renderSummary(); renderJournal(); renderSelected(); renderLibrary(); renderHistory(); }
+function shortDate(key){
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+}
+function longDate(key){
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+function monthLabel(key, yearStyle){
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('fr-FR', { month: 'short', year: yearStyle || 'numeric' });
+}
+function dayStats(k){
+  const n = (state.log[k] || []).length, t = sumEntries(state.log[k]), d = dayData(k);
+  return { k, n, t, burn: d.burn, weight: d.weight, bal: n > 0 ? dayBalance(t.kcal, d.burn) : null };
+}
+// One row per day (7 days), per week (1 month) or per month (1 year); groups keep sums to give per-day averages.
+function groupRows(days){
+  const groups = new Map();
+  for (const r of days) {
+    const key = range === 7 ? r.k : range === 30 ? mondayOf(r.k) : r.k.slice(0, 7);
+    let g = groups.get(key);
+    if (!g) {
+      const label = range === 7 ? dayTitle(r.k) : range === 30 ? 'Sem. du ' + shortDate(key) : monthLabel(key);
+      g = { label, nFood: 0, kcal: 0, p: 0, f: 0, nBurn: 0, burn: 0, nBal: 0, bal: 0, nW: 0, w: 0 };
+      groups.set(key, g);
+    }
+    if (r.n > 0) { g.nFood++; g.kcal += r.t.kcal; g.p += r.t.p; g.f += r.t.f; }
+    if (r.burn !== null) { g.nBurn++; g.burn += r.burn; }
+    if (r.bal !== null) { g.nBal++; g.bal += r.bal; }
+    if (r.weight !== null) { g.nW++; g.w += r.weight; }
+  }
+  return [...groups.values()];
+}
+function renderHistory(){
+  document.querySelectorAll('[data-action="range"]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.r) === range)));
+  const days = lastDays(dayKey(new Date()), range).map(dayStats);   // newest first
+  const filled = days.filter(r => r.n > 0), withBal = days.filter(r => r.bal !== null);
+  let groups = groupRows(days);
+  if (range > 7) groups = groups.filter(g => g.nFood || g.nBurn || g.nW);
+  const avg = filled.length ? filled.reduce((a, r) => ({ kcal: a.kcal + r.t.kcal, p: a.p + r.t.p, f: a.f + r.t.f }), { kcal: 0, p: 0, f: 0 }) : null;
+  const dash = '<td>–</td>';
+  const mean = (n, sum, d) => n ? '<td>' + fmt(sum / n, d || 0) + '</td>' : dash;
+  $('history').innerHTML =
+    '<thead><tr><th>' + (range === 7 ? 'Jour' : range === 30 ? 'Semaine' : 'Mois') + '</th><th>kcal</th><th>Dép.</th><th>Bilan</th><th>Poids</th><th>Prot. g</th><th>Lip. g</th></tr></thead><tbody>' +
+    groups.map(g =>
+      '<tr><td>' + esc(g.label) + '</td>' + mean(g.nFood, g.kcal) + mean(g.nBurn, g.burn) +
+      (g.nBal ? '<td class="' + (g.bal <= 0 ? 'met' : '') + '">' + signed(g.bal / g.nBal) + '</td>' : dash) + mean(g.nW, g.w, 1) +
+      (g.nFood ? '<td class="' + (g.p / g.nFood >= state.targets.prot ? 'met' : '') + '">' + fmt(g.p / g.nFood) + '</td>' + mean(g.nFood, g.f) : '<td>–</td><td>–</td>') + '</tr>'
+    ).join('') +
+    (avg ? '<tr class="avg"><td>Moyenne (' + filled.length + ' j)</td><td>' + fmt(avg.kcal / filled.length) + '</td><td></td><td>' +
+      (withBal.length ? signed(withBal.reduce((s, r) => s + r.bal, 0) / withBal.length) : '–') + '</td><td></td><td>' + fmt(avg.p / filled.length) + '</td><td>' + fmt(avg.f / filled.length) + '</td></tr>' : '') +
+    '</tbody>';
+  let note = range > 7 ? 'Les lignes montrent des moyennes par jour. ' : '';
+  if (withBal.length) {
+    const total = withBal.reduce((s, r) => s + r.bal, 0);
+    note += 'Sur ' + withBal.length + ' jour' + (withBal.length > 1 ? 's' : '') + ' avec bilan : ' + signed(total) + ' kcal, soit ≈ ' + signed(kgFromKcal(total), 2) + ' kg théorique.';
+  }
+  const weighed = days.filter(r => r.weight !== null);
+  if (weighed.length > 1) {
+    const last = weighed[0], first = weighed[weighed.length - 1];   // days run from newest to oldest
+    note += (note ? ' ' : '') + 'Poids réel (' + shortDate(first.k) + ' → ' + shortDate(last.k) + ') : ' + signed(last.weight - first.weight, 1) + ' kg.';
+  }
+  $('histNote').textContent = note;
+  renderChart(days.slice().reverse());
+}
+
+/* Weight chart: real weigh-ins vs a theoretical curve that starts at the first weight of the period
+   and then applies each day's balance (the balance of day k shows up on the scale from day k+1). */
+let chartModel = null;
+function niceStep(span){
+  const raw = span / 4;
+  for (const s of [0.1, 0.2, 0.5, 1, 2, 5, 10, 20]) if (s >= raw) return s;
+  return 50;
+}
+function renderChart(days){   // oldest first
+  const box = $('chart'), tip = $('tip');
+  chartModel = null; tip.hidden = true;
+  const a = days.findIndex(r => r.weight !== null);
+  $('chartBlock').hidden = a < 0;
+  $('chartEmpty').hidden = a >= 0;
+  if (a < 0) return;
+  const hasBal = days.some(r => r.bal !== null);
+  $('legendTh').hidden = !hasBal;
+  const pts = []; let cum = 0; const w0 = days[a].weight;
+  for (let i = a; i < days.length; i++) {
+    pts.push({ k: days[i].k, w: days[i].weight, th: hasBal ? w0 + kgFromKcal(cum) : null });
+    if (days[i].bal !== null) cum += days[i].bal;
+  }
+  const vals = pts.flatMap(p => [p.w, p.th]).filter(v => v !== null);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const step = niceStep(Math.max(hi - lo, 0.4));
+  lo = Math.floor((lo - step * 0.1) / step + 1e-9) * step; hi = Math.ceil((hi + step * 0.1) / step - 1e-9) * step;
+  const W = Math.max(box.clientWidth, 260), H = 220, L = 44, R = 12, T = 10, B = 24;
+  const X = i => L + (pts.length > 1 ? i / (pts.length - 1) : 0.5) * (W - L - R);
+  const Y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+  const P = (i, v) => X(i).toFixed(1) + ' ' + Y(v).toFixed(1);
+  let grid = '';
+  for (let v = lo; v <= hi + 1e-9; v += step) {
+    const tv = Math.round(v * 100) / 100, y = Y(tv).toFixed(1);
+    grid += '<line class="gridl" x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '"/><text x="' + (L - 6) + '" y="' + (Number(y) + 4) + '" text-anchor="end">' + fmt(tv, step < 1 ? 1 : 0) + '</text>';
+  }
+  const nl = Math.min(4, pts.length);
+  for (let j = 0; j < nl; j++) {
+    const i = nl === 1 ? 0 : Math.round(j * (pts.length - 1) / (nl - 1)), k = pts[i].k;
+    const txt = range === 365 ? monthLabel(k, '2-digit') : shortDate(k);
+    grid += '<text x="' + X(i).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="' + (nl === 1 ? 'middle' : j === 0 ? 'start' : j === nl - 1 ? 'end' : 'middle') + '">' + esc(txt) + '</text>';
+  }
+  const real = pts.map((p, i) => ({ i, v: p.w })).filter(o => o.v !== null);
+  const thPts = pts.map((p, i) => ({ i, v: p.th })).filter(o => o.v !== null);
+  const line = (list, cls) => list.length > 1 ? '<path class="' + cls + '" d="' + list.map((o, n) => (n ? 'L' : 'M') + P(o.i, o.v)).join('') + '"/>' : '';
+  const dots = real.length <= 60 ? real.map(o => '<circle class="dot" cx="' + X(o.i).toFixed(1) + '" cy="' + Y(o.v).toFixed(1) + '" r="4"/>').join('') : '';
+  box.innerHTML = '<svg width="' + W + '" height="' + H + '" role="img" aria-label="Courbe du poids réel' + (hasBal ? ' et du poids théorique' : '') + ', du ' + esc(shortDate(pts[0].k)) + ' au ' + esc(shortDate(pts[pts.length - 1].k)) + '">' +
+    grid + line(thPts, 'l-th') + line(real, 'l-act') + dots +
+    '<line id="cross" class="cross" y1="' + T + '" y2="' + (H - B) + '" hidden/></svg>';
+  chartModel = { pts, X, W, L, R };
+}
+function chartHover(ev){
+  const m = chartModel; if (!m) return;
+  const rect = $('chart').getBoundingClientRect();
+  const span = m.W - m.L - m.R;
+  let i = m.pts.length > 1 ? Math.round((ev.clientX - rect.left - m.L) / span * (m.pts.length - 1)) : 0;
+  i = Math.max(0, Math.min(m.pts.length - 1, i));
+  const p = m.pts[i], x = m.X(i), tip = $('tip'), cross = $('cross');
+  cross.setAttribute('x1', x); cross.setAttribute('x2', x); cross.removeAttribute('hidden');
+  tip.innerHTML = '<b>' + esc(longDate(p.k)) + '</b><br>' +
+    (p.w !== null ? 'Poids : ' + fmt(p.w, 1) + ' kg<br>' : 'Pas de pesée<br>') +
+    (p.th !== null ? 'Théorique : ' + fmt(p.th, 1) + ' kg' : '') +
+    (p.w !== null && p.th !== null ? '<br>Écart : ' + signed(p.w - p.th, 1) + ' kg' : '');
+  tip.hidden = false;
+  tip.style.left = Math.max(0, x > m.W / 2 ? x - tip.offsetWidth - 10 : x + 10) + 'px';
+}
+function chartLeave(){ const t = $('tip'), c = $('cross'); t.hidden = true; if (c) c.setAttribute('hidden', ''); }
+function renderAll(){ renderBody(); renderSummary(); renderJournal(); renderSelected(); renderLibrary(); renderHistory(); }
 
 /* ---------- product selection and journal ---------- */
 function select(product){
@@ -691,6 +887,7 @@ document.addEventListener('click', ev => {
   if (a === 'prev') { currentDay = shiftDay(currentDay, -1); renderAll(); }
   else if (a === 'next') { if (currentDay < dayKey(new Date())) { currentDay = shiftDay(currentDay, 1); renderAll(); } }
   else if (a === 'today') { currentDay = dayKey(new Date()); renderAll(); }
+  else if (a === 'range') { range = Number(b.dataset.r) || 7; renderHistory(); }
   else if (a === 'scan') startScan();
   else if (a === 'stopscan') { stopScan(); say(''); }
   else if (a === 'torch') toggleTorch();
@@ -730,6 +927,12 @@ document.addEventListener('change', ev => {
     const g = num(t.value);
     if (e && g !== null && g >= 0) { e.g = g; save(); renderSummary(); renderJournal(); renderHistory(); }
     else if (e) t.value = e.g;
+  } else if (t.id === 'dBurn' || t.id === 'dWeight') {
+    const v = num(t.value), field = t.id === 'dBurn' ? 'burn' : 'weight';
+    if (t.value.trim() === '') setDayField(currentDay, field, null);
+    else if (v !== null && v > 0) setDayField(currentDay, field, v);
+    else { renderBody(); return; }
+    save(); renderSummary(); renderHistory();
   } else if (t.id === 'tKcal' || t.id === 'tProt' || t.id === 'tFat') {
     const v = num(t.value);
     if (v !== null && v >= 0) {
@@ -749,6 +952,11 @@ document.addEventListener('change', ev => {
     rd.readAsText(t.files[0]); t.value = '';
   }
 });
+$('chart').addEventListener('pointermove', chartHover);
+$('chart').addEventListener('pointerdown', chartHover);
+$('chart').addEventListener('pointerleave', chartLeave);
+let resizeTimer = null;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderHistory, 150); });
 // release the camera as soon as the app leaves the foreground
 document.addEventListener('visibilitychange', () => { if (document.hidden && scanning) stopScan(); });
 function syncTargets(){ $('tKcal').value = state.targets.kcal; $('tProt').value = state.targets.prot; $('tFat').value = state.targets.fat; }

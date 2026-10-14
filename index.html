@@ -111,6 +111,12 @@ input:focus{border-color:var(--accent)}
 .chips button{background:var(--bg);border:1px solid var(--hair);border-radius:999px;padding:8px 16px;font-variant-numeric:tabular-nums;min-height:40px}
 .preview{margin:0;font:600 1.1rem var(--font-display);font-variant-numeric:tabular-nums}
 .note{margin:0;font-size:.88rem;color:var(--warn)}
+.fold>summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:44px}
+.fold>summary::-webkit-details-marker{display:none}
+.fold>summary h2{margin:0}
+.fold>summary::after{content:'';flex:none;width:9px;height:9px;margin-right:6px;border-right:2px solid var(--ink);border-bottom:2px solid var(--ink);transform:rotate(45deg)}
+.fold[open]>summary::after{transform:rotate(-135deg)}
+.fold[open]>summary{margin-bottom:10px}
 .histbox{display:flex;flex-direction:column;gap:12px}
 .seg{display:flex;border:1.5px solid var(--ink);border-radius:8px;overflow:hidden}
 .seg button{flex:1;background:var(--surface);border:0;padding:10px;font-weight:500;min-height:44px}
@@ -222,20 +228,20 @@ tr.avg td{border-top:2px solid var(--ink);font-weight:600}
     <div id="formBox" hidden></div>
   </section>
 
-  <section aria-labelledby="jTitle">
-    <h2 id="jTitle">Journal</h2>
+  <details class="fold" id="fold-journal" open>
+    <summary><h2>Journal</h2></summary>
     <ul id="journal" class="journal"></ul>
-  </section>
+  </details>
 
-  <section aria-labelledby="lTitle">
-    <h2 id="lTitle">Mes produits</h2>
+  <details class="fold" id="fold-products">
+    <summary><h2>Mes produits</h2></summary>
     <label class="sr" for="libSearch">Filtrer mes produits</label>
     <input id="libSearch" type="search" placeholder="Filtrer par nom ou marque" autocomplete="off">
     <ul id="library" class="library"></ul>
-  </section>
+  </details>
 
-  <section aria-labelledby="hTitle">
-    <h2 id="hTitle">Historique</h2>
+  <details class="fold" id="fold-history">
+    <summary><h2>Historique</h2></summary>
     <div class="histbox">
       <div class="seg" role="group" aria-label="Période affichée">
         <button type="button" data-action="range" data-r="7" aria-pressed="true">7 jours</button>
@@ -251,7 +257,7 @@ tr.avg td{border-top:2px solid var(--ink);font-weight:600}
       <div class="scroll"><table id="history"></table></div>
       <p class="hint" id="histNote"></p>
     </div>
-  </section>
+  </details>
 
   <details class="settings">
     <summary>Objectifs, installation et sauvegarde</summary>
@@ -984,7 +990,25 @@ if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
 }
 
+// remember which collapsible sections are open (journal open by default, the others closed)
+const FOLDS_KEY = 'carnet-seche-folds';
+function setupFolds(){
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(FOLDS_KEY) || '{}') || {}; } catch (e) {}
+  document.querySelectorAll('details.fold').forEach(d => {
+    if (d.id in saved) d.open = !!saved[d.id];
+    d.addEventListener('toggle', () => {
+      if (d.id === 'fold-history' && d.open) renderHistory();   // the chart needs a visible box to measure its width
+      try {
+        const cur = JSON.parse(localStorage.getItem(FOLDS_KEY) || '{}') || {};
+        cur[d.id] = d.open; localStorage.setItem(FOLDS_KEY, JSON.stringify(cur));
+      } catch (e) {}
+    });
+  });
+}
+
 syncTargets();
+setupFolds();
 renderAll();
 setupInstall();
 </script>

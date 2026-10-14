@@ -1,6 +1,6 @@
-// Service worker: keeps the app shell available offline.
+﻿// Service worker: keeps the app shell available offline.
 // Bump CACHE when you change any file so phones pick up the new version.
-const CACHE = 'carnet-seche-v2';
+const CACHE = 'carnet-seche-v3';
 const ASSETS = [
   './',
   './index.html',
